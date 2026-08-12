@@ -1622,7 +1622,7 @@ function renderTrendChart(metric, timeKey){
 }
 function bindSingleHover(svg, body, tip, data, dates, meta, mm, xOf, yOf, pad, w, h, metric, fmtVal){
   const hit = svg.querySelector('.trend-hit');
-  const cross = svg.querySelector('#tc-line');
+  const cross = svg.querySelector('.trend-crosshair');
   if(!hit || !cross || !tip) return;
   const onMove = (e)=>{
     const r = svg.getBoundingClientRect();
