@@ -585,7 +585,7 @@
           <div class="right">
             <!-- 日期快捷标签组（不包含「全部」；自定义按钮弹出双月日历面板） -->
             <div class="quick-range" id="quick-range">
-              <button class="qr-btn" data-key="7d" data-label="今日">今日</button>
+              <button class="qr-btn" data-key="today" data-label="今日">今日</button>
               <button class="qr-btn" data-key="7d" data-label="本周">本周</button>
               <button class="qr-btn active" data-key="30d" data-label="本月">本月</button>
               <button class="qr-btn" data-key="90d" data-label="近 90 天">近 90 天</button>
@@ -602,7 +602,7 @@
             </div>
             <div class="lab">总消耗积分</div>
             <div class="num" id="ov-points">—</div>
-            <div class="trend up">▲ 较上周 +12.6%</div>
+            <div class="trend up" id="ov-trend-points">▲ 较上周 +12.6%</div>
           </div>
           <div class="stat">
             <div class="stat-icon si-2">
@@ -610,7 +610,7 @@
             </div>
             <div class="lab">总生成时长</div>
             <div class="num" id="ov-time">—</div>
-            <div class="trend up">▲ 较上周 +8.2%</div>
+            <div class="trend up" id="ov-trend-time">▲ 较上周 +8.2%</div>
           </div>
           <div class="stat">
             <div class="stat-icon si-3">
@@ -618,7 +618,7 @@
             </div>
             <div class="lab">总抽卡次数</div>
             <div class="num" id="ov-cards">—</div>
-            <div class="trend down">▼ 较上周 -3.4%</div>
+            <div class="trend down" id="ov-trend-cards">▼ 较上周 -3.4%</div>
           </div>
         </div>
 
@@ -828,6 +828,10 @@ const BASE = {
   /* 「全部时间」按月聚合（近 12 个月），便于 X 轴显示年月 */
   'all': [
     1820, 2150, 2680, 3320, 3580, 4180, 4520, 4880, 5320, 6120, 7280, 9280
+  ],
+  'today': [
+    180, 165, 140, 120, 95, 85, 110, 165, 280, 420,
+    580, 720, 850, 920, 780, 650, 520, 410, 350, 290, 240, 200, 170, 150
   ]
 };
 /* 各指标在时长基准上派生 + 轻微抖动，保证形态相近但量级不同 */
@@ -838,7 +842,7 @@ function jitter(arr, factor, seed){
   });
 }
 const TREND = {};
-['7d','30d','90d','all'].forEach(k=>{
+['7d','30d','90d','all','today'].forEach(k=>{
   TREND[k] = {
     points: jitter(BASE[k], 1.25, 1.3),  // 消耗积分
     time:   BASE[k].slice(),             // 生成时长（秒）
@@ -850,7 +854,8 @@ const TREND_META = {
   '7d':  {label:'近 7 天',  axis:'daily',   unit:'D'},
   '30d': {label:'近 30 天', axis:'daily',   unit:'D'},
   '90d': {label:'近 90 天', axis:'daily',   unit:'D'},
-  'all': {label:'全部时间', axis:'monthly', unit:'M'}
+  'all': {label:'全部时间', axis:'monthly', unit:'M'},
+  'today': {label:'今日', axis:'hourly', unit:'H'}
 };
 /* X 轴标签计算：daily → MM-DD；monthly → YYYY-MM */
 function axisLabelDate(axis, i, n){
@@ -858,6 +863,8 @@ function axisLabelDate(axis, i, n){
   if(axis === 'daily'){
     d.setDate(d.getDate() - (n - 1 - i));
     return `${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  } else if(axis === 'hourly'){
+    return `${String(i).padStart(2,'0')}:00`;
   } else {
     d.setMonth(d.getMonth() - (n - 1 - i));
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
@@ -868,6 +875,8 @@ function fullDate(axis, i, n){
   if(axis === 'daily'){
     d.setDate(d.getDate() - (n - 1 - i));
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  } else if(axis === 'hourly'){
+    return `${TREND_META.today.label} ${String(i).padStart(2,'0')}:00`;
   } else {
     d.setMonth(d.getMonth() - (n - 1 - i));
     return `${d.getFullYear()}年${d.getMonth()+1}月`;
@@ -1645,8 +1654,38 @@ function bindSingleHover(svg, body, tip, data, dates, meta, mm, xOf, yOf, pad, w
   hit.addEventListener('mousemove', onMove);
   hit.addEventListener('mouseleave', onLeave);
 }
+/* KPI 环比：随时间维度切换标签 + 数值 */
+const PERIOD_LABELS = {
+  'today': '较昨日', '7d': '较上周', '30d': '较上月', '90d': '较上期', 'all': '较上年'
+};
+function seededRand(seed){ const x = Math.sin(seed*999+7)*10000; return x - Math.floor(x); }
+function updateKpi(timeKey){
+  const data = TREND[timeKey] || TREND['30d'];
+  const sumPts = data.points.reduce((s,v)=>s+v, 0);
+  const sumTime = data.time.reduce((s,v)=>s+v, 0);
+  const sumCards = data.cards.reduce((s,v)=>s+v, 0);
+  const elPts = document.getElementById('ov-points');
+  const elTime = document.getElementById('ov-time');
+  const elCards = document.getElementById('ov-cards');
+  if(elPts) elPts.textContent = fmt(sumPts);
+  if(elTime) elTime.textContent = fmtTime(sumTime);
+  if(elCards) elCards.textContent = fmt(sumCards);
+  const label = PERIOD_LABELS[timeKey] || '较上期';
+  const seedMap = {'today':1,'7d':2,'30d':3,'90d':4,'all':5};
+  const seed = seedMap[timeKey] || 6;
+  [['points',0],['time',1],['cards',2]].forEach(([m,idx])=>{
+    const el = document.getElementById('ov-trend-'+m);
+    if(!el) return;
+    const r = seededRand(seed + idx*0.73);
+    const change = ((r - 0.38) * 42).toFixed(1);
+    const isUp = parseFloat(change) >= 0;
+    el.className = 'trend ' + (isUp ? 'up' : 'down');
+    el.textContent = `${isUp ? '▲' : '▼'} ${label} ${isUp ? '+' : ''}${change}%`;
+  });
+}
 function renderAllTrends(timeKey){
   ['points','time','cards'].forEach(m => renderTrendChart(m, timeKey));
+  updateKpi(timeKey);
 }
 
 
