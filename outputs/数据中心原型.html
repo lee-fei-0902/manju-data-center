@@ -587,8 +587,8 @@
             <div class="quick-range" id="quick-range">
               <button class="qr-btn" data-key="today" data-label="今日">今日</button>
               <button class="qr-btn" data-key="yesterday" data-label="昨日">昨日</button>
-              <button class="qr-btn" data-key="7d" data-label="本周">本周</button>
-              <button class="qr-btn active" data-key="30d" data-label="本月">本月</button>
+              <button class="qr-btn" data-key="7d" data-label="近7天">近7天</button>
+              <button class="qr-btn active" data-key="30d" data-label="近30天">近30天</button>
               <button class="qr-btn" data-key="90d" data-label="近 90 天">近 90 天</button>
               <button class="qr-btn qr-custom" data-key="custom" data-label="自定义">自定义</button>
             </div>
@@ -1665,7 +1665,7 @@ function bindSingleHover(svg, body, tip, data, dates, meta, mm, xOf, yOf, pad, w
 }
 /* KPI 环比：随时间维度切换标签 + 数值 */
 const PERIOD_LABELS = {
-  'today': '较昨日', 'yesterday': '较前日', '7d': '较上周', '30d': '较上月', '90d': '较上期', 'all': '较上年'
+  'today': '较昨日', 'yesterday': '较前日', '7d': '较上7天', '30d': '较上30天', '90d': '较上期', 'all': '较上年'
 };
 function seededRand(seed){ const x = Math.sin(seed*999+7)*10000; return x - Math.floor(x); }
 function updateKpi(timeKey){
