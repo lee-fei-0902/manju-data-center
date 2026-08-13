@@ -2049,12 +2049,13 @@ function openProjectDetail(projectName){
   renderModalBars('modal-p-members-bars', involved.map(m=>({name:m.name, val:m.val})), 'points');
   // 成员生成时长对比：沿用成员消耗对比的成员口径，按消耗占比拆分项目总时长（秒）
   renderModalBars('modal-p-members-time', involved.map(m=>({name:m.name, val: Math.round(dur * m.val / Math.max(1, p.points))})), 'time');
-  // 单集分析：每集消耗按成员拆分（堆叠）；生成时长保持每集总额
+  // 单集分析：每集消耗与生成时长均按成员拆分（堆叠），对称视图
   const epSeed = hashSeed(p.name + '#ep');
-  const epMemberData = perEpisodeMemberData(p, involved, epSeed);
-  const epTimeData   = perEpisodeData(p.ep, calcDuration(p), epSeed + 1);
+  const epMemberData = perEpisodeMemberData(p, involved, epSeed, p.points);
+  const timeWeights  = involved.map(m=> Math.round(calcDuration(p) * m.val / Math.max(1, p.points)));
+  const epTimeMemberData = perEpisodeMemberData(p, involved, epSeed + 1, calcDuration(p), timeWeights);
   renderModalStackedBars('modal-p-ep-points', epMemberData, 'points', '集', involved);
-  renderModalVBars('modal-p-ep-time',   epTimeData,   'time',   '集');
+  renderModalStackedBars('modal-p-ep-time',   epTimeMemberData, 'time', '集', involved);
 }
 
 /* === 详情：小组 === */
@@ -2333,11 +2334,11 @@ function pickMembers(count, k, seed){
   return arr.slice(0,k).sort((a,b)=>a-b);
 }
 /* 每集：先按 perEpisodeData 算总额，再按成员权重拆成 1~k 段（k<=3），保证堆叠后=总额 */
-function perEpisodeMemberData(p, involved, epSeed){
+function perEpisodeMemberData(p, involved, epSeed, totalBase, weights){
   const n = p.ep;
   if(n<=0) return [];
-  const totals = perEpisodeData(n, p.points, epSeed);
-  const w = involved.map(m=> Math.max(0, m.val));
+  const totals = perEpisodeData(n, totalBase, epSeed);
+  const w = (weights || involved.map(m=> m.val)).map(x=> Math.max(0, x));
   const maxK = Math.min(3, involved.length);
   const eps = [];
   for(let i=0;i<n;i++){
