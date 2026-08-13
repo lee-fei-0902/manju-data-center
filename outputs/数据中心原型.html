@@ -434,7 +434,7 @@
   }
   .chart-title{font-size:14px;font-weight:600;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:8px}
   .chart-sub{font-size:11.5px;color:var(--ink-3);font-weight:400}
-  .chart-body{flex:1;min-height:0;display:flex;flex-direction:column;justify-content:center}
+  .chart-body{flex:1;min-height:0;display:flex;flex-direction:column;justify-content:center;position:relative}
   .chart-foot{margin-top:10px;font-size:11.5px;color:var(--ink-3)}
   .chart-foot span{color:var(--ink);font-variant-numeric:tabular-nums;font-weight:500}
 
@@ -1692,50 +1692,61 @@ function renderAllTrends(timeKey){
 /* =========================================================
    趋势图 hover 提示：节点显示日期 + 数据值
    ========================================================= */
-let trendTooltip = null;
-function ensureTooltip(){
-  if(!trendTooltip){
-    trendTooltip = document.createElement('div');
-    trendTooltip.className = 'trend-tip';
-    document.body.appendChild(trendTooltip);
+/* Modal 趋势图 / 柱状图 hover 浮层：tooltip 锚定在 chart-body 内（相对定位，避免滚动偏移） */
+function ensureChartTip(body){
+  let tip = body.querySelector(':scope > .trend-tip');
+  if(!tip){
+    tip = document.createElement('div');
+    tip.className = 'trend-tip';
+    body.appendChild(tip);
   }
-  return trendTooltip;
+  return tip;
 }
-function showTrendTip(html, x, y){
-  const t = ensureTooltip();
-  t.innerHTML = html;
-  t.style.display = 'block';
-  // 防止溢出：先显示再偏移
-  const tw = t.offsetWidth, th = t.offsetHeight;
-  const px = Math.min(window.innerWidth - tw - 8, x + 12);
-  const py = Math.max(8, y - th - 12);
-  t.style.left = px + 'px';
-  t.style.top  = py + 'px';
+function showChartTip(body, tip, html, tx, ty){
+  tip.innerHTML = html;
+  tip.style.display = 'block';
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  let left = tx + 12;
+  if(left + tw > body.clientWidth) left = tx - tw - 12;
+  if(left < 4) left = 4;
+  let top = ty - th - 8;
+  if(top < 4) top = ty + 12;
+  tip.style.left = left + 'px';
+  tip.style.top  = top + 'px';
 }
-function hideTrendTip(){ if(trendTooltip) trendTooltip.style.display = 'none'; }
+function hideChartTip(tip){ if(tip) tip.style.display = 'none'; }
+/* SVG 坐标(0~600 / 0~200) → 相对 chart-body 的像素坐标，使 tooltip 锚定在图表内 */
+function pointInBody(svg, body, xOfI, yOfV){
+  const sR = svg.getBoundingClientRect();
+  const bR = body.getBoundingClientRect();
+  return {
+    tx: (sR.left - bR.left) + (xOfI/600)*sR.width,
+    ty: (sR.top  - bR.top ) + (yOfV/200)*sR.height
+  };
+}
 function bindTrendHover(svg, dotsData, data, meta, mm, xOf, yOf, pad){
-  // 小数据量：绑定每个 hit 圆
+  const body = svg.parentElement;
+  if(!body) return;
+  const tip = ensureChartTip(body);
+  const showAt = (i)=>{
+    const v = data[i];
+    const dot = svg.querySelector('.line-dot[data-i="'+i+'"]');
+    if(dot) dot.setAttribute('r','4.5');
+    const p = pointInBody(svg, body, xOf(i), yOf(v));
+    showChartTip(body, tip,
+      `<div class="tip-date">${fullDate(meta.axis, i, data.length)}</div><div class="tip-val">${mm.unit}：<b>${mm.fmt(v)}</b></div>`,
+      p.tx, p.ty);
+  };
+  const clear = ()=>{
+    svg.querySelectorAll('.line-dot').forEach(d=>d.setAttribute('r','3'));
+    const gline = svg.querySelector('.hover-line');
+    if(gline) gline.style.display = 'none';
+    hideChartTip(tip);
+  };
   if(dotsData.length > 0){
     svg.querySelectorAll('.line-hit').forEach(hit=>{
-      hit.addEventListener('mouseenter', (e)=>{
-        const i = +hit.dataset.i;
-        const v = data[i];
-        const dot = svg.querySelector('.line-dot[data-i="'+i+'"]');
-        if(dot) dot.setAttribute('r','4.5');
-        const r = svg.getBoundingClientRect();
-        const sx = r.left + (xOf(i)/600)*r.width;
-        const sy = r.top  + (yOf(v)/200)*r.height;
-        showTrendTip(
-          `<div class="tip-date">${fullDate(meta.axis, i, data.length)}</div><div class="tip-val">${mm.unit}：<b>${mm.fmt(v)}</b></div>`,
-          sx, sy
-        );
-      });
-      hit.addEventListener('mouseleave', ()=>{
-        const i = +hit.dataset.i;
-        const dot = svg.querySelector('.line-dot[data-i="'+i+'"]');
-        if(dot) dot.setAttribute('r','3');
-        hideTrendTip();
-      });
+      hit.addEventListener('mouseenter', ()=> showAt(+hit.dataset.i));
+      hit.addEventListener('mouseleave', clear);
     });
   } else {
     // 大数据量：根据鼠标 x 找最近点
@@ -1747,9 +1758,7 @@ function bindTrendHover(svg, dotsData, data, meta, mm, xOf, yOf, pad){
       const pxInSvg = ratio * 600;
       const idx = Math.round(((pxInSvg - pad.l) / (600 - pad.l - pad.r)) * (data.length - 1));
       const i = Math.max(0, Math.min(data.length-1, idx));
-      const v = data[i];
-      const sx = r.left + (xOf(i)/600)*r.width;
-      const sy = r.top  + (yOf(v)/200)*r.height;
+      showAt(i);
       // 临时竖线辅助
       let gline = svg.querySelector('.hover-line');
       if(!gline){
@@ -1765,16 +1774,8 @@ function bindTrendHover(svg, dotsData, data, meta, mm, xOf, yOf, pad){
       gline.setAttribute('y1', pad.t);
       gline.setAttribute('y2', pad.t + (200 - pad.t - pad.b));
       gline.style.display = 'block';
-      showTrendTip(
-        `<div class="tip-date">${fullDate(meta.axis, i, data.length)}</div><div class="tip-val">${mm.unit}：<b>${mm.fmt(v)}</b></div>`,
-        sx, sy
-      );
     });
-    hit.addEventListener('mouseleave', ()=>{
-      const gline = svg.querySelector('.hover-line');
-      if(gline) gline.style.display = 'none';
-      hideTrendTip();
-    });
+    hit.addEventListener('mouseleave', clear);
   }
 }
 document.getElementById('tabs').addEventListener('click',(e)=>{
@@ -1889,7 +1890,7 @@ function closeModal(){
   const m = document.getElementById('modal-mask');
   if(m) m.remove();
   document.removeEventListener('keydown', escClose);
-  hideTrendTip();
+  document.querySelectorAll('.trend-tip').forEach(t=>t.style.display='none');
 }
 function escClose(e){ if(e.key === 'Escape') closeModal(); }
 
@@ -2284,7 +2285,7 @@ function renderModalVBars(svgId, data, metric, xLabel){
     const y = yOf(v);
     const bh = (pad.t + ch) - y;
     const tipVal = metric==='time' ? (v/60).toFixed(1)+' 分钟' : fmtVal(v);
-    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" fill="${color}" rx="2"><title>${xLabel}${i+1} · ${tipVal}</title></rect>`;
+    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" fill="${color}" rx="2"></rect>`;
     if(i % xStep === 0 || i === n-1){
       bars += `<text class="axis-label" x="${(x+barW/2).toFixed(1)}" y="${h-12}" text-anchor="middle">${xLabel}${i+1}</text>`;
     }
@@ -2294,6 +2295,32 @@ function renderModalVBars(svgId, data, metric, xLabel){
   const avg = Math.round(data.reduce((s,v)=>s+v,0)/data.length);
   if(peakEl) peakEl.textContent = metric==='time' ? (peak/60).toFixed(1)+' 分钟' : fmtVal(peak);
   if(avgEl)  avgEl.textContent  = metric==='time' ? (avg/60).toFixed(1)+' 分钟' : fmtVal(avg);
+  // hover 浮层：每个柱加透明命中区，tooltip 锚定在 chart-body 内
+  const vbBody = svg.parentElement;
+  if(vbBody){
+    const vbTip = ensureChartTip(vbBody);
+    const tipName = metric==='time' ? '生成时长' : '消耗积分';
+    data.forEach((v,i)=>{
+      const x = pad.l + gap + i*(barW+gap);
+      const y = yOf(v);
+      const hit = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      hit.setAttribute('x', x.toFixed(1));
+      hit.setAttribute('y', pad.t.toFixed(1));
+      hit.setAttribute('width', barW.toFixed(1));
+      hit.setAttribute('height', ch.toFixed(1));
+      hit.setAttribute('fill', 'transparent');
+      hit.style.cursor = 'pointer';
+      hit.addEventListener('mouseenter', ()=>{
+        const p = pointInBody(svg, vbBody, x + barW/2, y);
+        const valTxt = metric==='time' ? (v/60).toFixed(1)+' 分钟' : fmt(v);
+        showChartTip(vbBody, vbTip,
+          `<div class="tip-date">第 ${i+1} 集</div><div class="tip-val">${tipName}：<b>${valTxt}</b></div>`,
+          p.tx, p.ty);
+      });
+      hit.addEventListener('mouseleave', ()=> hideChartTip(vbTip));
+      svg.appendChild(hit);
+    });
+  }
 }
 
 /* 点击「详情」派发到 openDetail */
