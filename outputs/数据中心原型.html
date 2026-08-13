@@ -586,6 +586,7 @@
             <!-- 日期快捷标签组（不包含「全部」；自定义按钮弹出双月日历面板） -->
             <div class="quick-range" id="quick-range">
               <button class="qr-btn" data-key="today" data-label="今日">今日</button>
+              <button class="qr-btn" data-key="yesterday" data-label="昨日">昨日</button>
               <button class="qr-btn" data-key="7d" data-label="本周">本周</button>
               <button class="qr-btn active" data-key="30d" data-label="本月">本月</button>
               <button class="qr-btn" data-key="90d" data-label="近 90 天">近 90 天</button>
@@ -832,6 +833,10 @@ const BASE = {
   'today': [
     180, 165, 140, 120, 95, 85, 110, 165, 280, 420,
     580, 720, 850, 920, 780, 650, 520, 410, 350, 290, 240, 200, 170, 150
+  ],
+  'yesterday': [
+    160, 150, 128, 112, 90, 80, 102, 158, 265, 400,
+    550, 690, 820, 880, 740, 620, 495, 390, 332, 275, 228, 190, 162, 142
   ]
 };
 /* 各指标在时长基准上派生 + 轻微抖动，保证形态相近但量级不同 */
@@ -842,7 +847,7 @@ function jitter(arr, factor, seed){
   });
 }
 const TREND = {};
-['7d','30d','90d','all','today'].forEach(k=>{
+['7d','30d','90d','all','today','yesterday'].forEach(k=>{
   TREND[k] = {
     points: jitter(BASE[k], 1.25, 1.3),  // 消耗积分
     time:   BASE[k].slice(),             // 生成时长（秒）
@@ -855,7 +860,8 @@ const TREND_META = {
   '30d': {label:'近 30 天', axis:'daily',   unit:'D'},
   '90d': {label:'近 90 天', axis:'daily',   unit:'D'},
   'all': {label:'全部时间', axis:'monthly', unit:'M'},
-  'today': {label:'今日', axis:'hourly', unit:'H'}
+  'today': {label:'今日', axis:'hourly', unit:'H'},
+  'yesterday': {label:'昨日', axis:'hourly', unit:'H', dayOffset:1}
 };
 /* X 轴标签计算：daily → MM-DD；monthly → YYYY-MM */
 function axisLabelDate(axis, i, n){
@@ -870,13 +876,16 @@ function axisLabelDate(axis, i, n){
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
   }
 }
-function fullDate(axis, i, n){
+function fullDate(axis, i, n, dayOffset){
   const d = new Date(TREND_END_DATE.getTime());
   if(axis === 'daily'){
     d.setDate(d.getDate() - (n - 1 - i));
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   } else if(axis === 'hourly'){
-    return `${TREND_META.today.label} ${String(i).padStart(2,'0')}:00`;
+    const off = dayOffset || 0;
+    const dd = new Date(TREND_END_DATE.getTime());
+    dd.setDate(dd.getDate() - off);
+    return `${dd.getFullYear()}-${String(dd.getMonth()+1).padStart(2,'0')}-${String(dd.getDate()).padStart(2,'0')} ${String(i).padStart(2,'0')}:00`;
   } else {
     d.setMonth(d.getMonth() - (n - 1 - i));
     return `${d.getFullYear()}年${d.getMonth()+1}月`;
@@ -1634,7 +1643,7 @@ function bindSingleHover(svg, body, tip, data, dates, meta, mm, xOf, yOf, pad, w
     cross.setAttribute('x2', xOf(i));
     cross.style.display = 'block';
     svg.querySelectorAll('.trend-dot').forEach(d => d.classList.toggle('active', +d.dataset.i === i));
-    const dateStr = fullDate(meta.axis, i, n);
+    const dateStr = fullDate(meta.axis, i, n, meta.dayOffset);
     tip.innerHTML = `<div class="tip-date">${dateStr}</div><div class="tip-val">${mm.name}：<b>${fmtVal(data[i])}</b></div>`;
     tip.style.display = 'block';
     const cR = body.getBoundingClientRect();
@@ -1656,7 +1665,7 @@ function bindSingleHover(svg, body, tip, data, dates, meta, mm, xOf, yOf, pad, w
 }
 /* KPI 环比：随时间维度切换标签 + 数值 */
 const PERIOD_LABELS = {
-  'today': '较昨日', '7d': '较上周', '30d': '较上月', '90d': '较上期', 'all': '较上年'
+  'today': '较昨日', 'yesterday': '较前日', '7d': '较上周', '30d': '较上月', '90d': '较上期', 'all': '较上年'
 };
 function seededRand(seed){ const x = Math.sin(seed*999+7)*10000; return x - Math.floor(x); }
 function updateKpi(timeKey){
@@ -1671,7 +1680,7 @@ function updateKpi(timeKey){
   if(elTime) elTime.textContent = fmtTime(sumTime);
   if(elCards) elCards.textContent = fmt(sumCards);
   const label = PERIOD_LABELS[timeKey] || '较上期';
-  const seedMap = {'today':1,'7d':2,'30d':3,'90d':4,'all':5};
+  const seedMap = {'today':1,'yesterday':7,'7d':2,'30d':3,'90d':4,'all':5};
   const seed = seedMap[timeKey] || 6;
   [['points',0],['time',1],['cards',2]].forEach(([m,idx])=>{
     const el = document.getElementById('ov-trend-'+m);
@@ -1734,7 +1743,7 @@ function bindTrendHover(svg, dotsData, data, meta, mm, xOf, yOf, pad){
     if(dot) dot.setAttribute('r','4.5');
     const p = pointInBody(svg, body, xOf(i), yOf(v));
     showChartTip(body, tip,
-      `<div class="tip-date">${fullDate(meta.axis, i, data.length)}</div><div class="tip-val">${mm.unit}：<b>${mm.fmt(v)}</b></div>`,
+      `<div class="tip-date">${fullDate(meta.axis, i, data.length, meta.dayOffset)}</div><div class="tip-val">${mm.unit}：<b>${mm.fmt(v)}</b></div>`,
       p.tx, p.ty);
   };
   const clear = ()=>{
