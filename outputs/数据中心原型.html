@@ -2049,11 +2049,11 @@ function openProjectDetail(projectName){
   renderModalBars('modal-p-members-bars', involved.map(m=>({name:m.name, val:m.val})), 'points');
   // 成员生成时长对比：沿用成员消耗对比的成员口径，按消耗占比拆分项目总时长（秒）
   renderModalBars('modal-p-members-time', involved.map(m=>({name:m.name, val: Math.round(dur * m.val / Math.max(1, p.points))})), 'time');
-  // 单集分析：按集数派生每集消耗积分与生成时长
+  // 单集分析：每集消耗按成员拆分（堆叠）；生成时长保持每集总额
   const epSeed = hashSeed(p.name + '#ep');
-  const epPointsData = perEpisodeData(p.ep, p.points, epSeed);
+  const epMemberData = perEpisodeMemberData(p, involved, epSeed);
   const epTimeData   = perEpisodeData(p.ep, calcDuration(p), epSeed + 1);
-  renderModalVBars('modal-p-ep-points', epPointsData, 'points', '集');
+  renderModalStackedBars('modal-p-ep-points', epMemberData, 'points', '集', involved);
   renderModalVBars('modal-p-ep-time',   epTimeData,   'time',   '集');
 }
 
@@ -2318,6 +2318,127 @@ function renderModalVBars(svgId, data, metric, xLabel){
           p.tx, p.ty);
       });
       hit.addEventListener('mouseleave', ()=> hideChartTip(vbTip));
+      svg.appendChild(hit);
+    });
+  }
+}
+
+/* === 单集消耗：按成员拆分的堆叠柱状图 === */
+function pickMembers(count, k, seed){
+  const arr = Array.from({length:count}, (_,i)=>i);
+  for(let i=count-1;i>0;i--){
+    const r = Math.floor(seededRand(seed + i*5.7) * (i+1));
+    const t = arr[i]; arr[i] = arr[r]; arr[r] = t;
+  }
+  return arr.slice(0,k).sort((a,b)=>a-b);
+}
+/* 每集：先按 perEpisodeData 算总额，再按成员权重拆成 1~k 段（k<=3），保证堆叠后=总额 */
+function perEpisodeMemberData(p, involved, epSeed){
+  const n = p.ep;
+  if(n<=0) return [];
+  const totals = perEpisodeData(n, p.points, epSeed);
+  const w = involved.map(m=> Math.max(0, m.val));
+  const maxK = Math.min(3, involved.length);
+  const eps = [];
+  for(let i=0;i<n;i++){
+    const total = totals[i];
+    const k = Math.max(1, Math.min(maxK, 1 + Math.floor(seededRand(epSeed + i*1.3) * maxK)));
+    const idxs = pickMembers(involved.length, k, epSeed + i*2.7);
+    const raw = idxs.map((j,t)=> w[j] * (0.8 + seededRand(epSeed + i*3.1 + t)*0.4));
+    const rawSum = raw.reduce((a,b)=>a+b,0) || 1;
+    let acc = 0;
+    const members = idxs.map((j,t)=>{
+      const pts = (t === idxs.length-1) ? (total - acc) : Math.round(total * raw[t]/rawSum);
+      acc += pts;
+      return {name: involved[j].name, color: involved[j].color, points: Math.max(0, pts)};
+    });
+    eps.push({ ep:i+1, total, members });
+  }
+  return eps;
+}
+function renderModalStackedBars(svgId, eps, metric, xLabel, legendMembers){
+  const svg = document.getElementById(svgId);
+  if(!svg) return;
+  const body = svg.parentElement;
+  const mm = METRIC_META[metric] || METRIC_META.points;
+  if(!eps || eps.length === 0){
+    svg.innerHTML = `<text x="300" y="100" text-anchor="middle" class="axis-label">暂无集数据</text>`;
+    const pk = document.getElementById(svgId.replace('modal-p-ep-points','modal-p-ep-peak-points').replace('modal-p-ep-time','modal-p-ep-peak-time'));
+    const ak = document.getElementById(svgId.replace('modal-p-ep-points','modal-p-ep-avg-points').replace('modal-p-ep-time','modal-p-ep-avg-time'));
+    if(pk) pk.textContent = '—';
+    if(ak) ak.textContent = '—';
+    return;
+  }
+  const w=600, h=200, pad={l:46, r:12, t:14, b:30};
+  const cw=w-pad.l-pad.r, ch=h-pad.t-pad.b;
+  const max = Math.max(...eps.map(e=>e.total), 1) * 1.1;
+  const n = eps.length;
+  const gap = Math.min(10, cw/(n*3));
+  const barW = Math.max(3, (cw - gap*(n+1)) / n);
+  const yOf = v => pad.t + ch - (v/max)*ch;
+  // 网格 + Y 轴
+  let grid='';
+  for(let kk=0;kk<=4;kk++){
+    const y = pad.t + ch*(kk/4);
+    const val = Math.round(max*(1-kk/4));
+    grid += `<line class="grid-line" x1="${pad.l}" y1="${y.toFixed(1)}" x2="${w-pad.r}" y2="${y.toFixed(1)}"/>`;
+    grid += `<text class="axis-label" x="${pad.l-6}" y="${(y+3).toFixed(1)}" text-anchor="end">${mm.fmt(val)}</text>`;
+  }
+  // 堆叠柱
+  let bars='';
+  const xStep = n<=15 ? 1 : Math.ceil(n/10);
+  eps.forEach((e,i)=>{
+    const x = pad.l + gap + i*(barW+gap);
+    let cursor = pad.t + ch;
+    e.members.forEach(m=>{
+      const bh = Math.max(0, (m.points/max)*ch);
+      cursor -= bh;
+      bars += `<rect x="${x.toFixed(1)}" y="${cursor.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" fill="${m.color}" rx="2"></rect>`;
+    });
+    if(i % xStep === 0 || i === n-1){
+      bars += `<text class="axis-label" x="${(x+barW/2).toFixed(1)}" y="${h-12}" text-anchor="middle">${xLabel}${i+1}</text>`;
+    }
+  });
+  svg.innerHTML = grid + bars;
+  // 图例（成员配色）
+  if(body && legendMembers && legendMembers.length){
+    const lg = legendMembers.map(m=>`<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--ink-2);margin-right:10px"><span style="width:9px;height:9px;border-radius:2px;display:inline-block;background:${m.color}"></span>${escapeHtml(m.name)}</span>`).join('');
+    let lgEl = body.querySelector('.chart-legend');
+    if(!lgEl){ lgEl = document.createElement('div'); lgEl.className='chart-legend'; body.insertBefore(lgEl, svg); }
+    lgEl.style.cssText = 'display:flex;flex-wrap:wrap;margin-bottom:6px';
+    lgEl.innerHTML = lg;
+  }
+  // 峰值/均值（按每集总额）
+  const peak = Math.max(...eps.map(e=>e.total));
+  const avg = Math.round(eps.reduce((s,e)=>s+e.total,0)/n);
+  const pk = document.getElementById(svgId.replace('modal-p-ep-points','modal-p-ep-peak-points').replace('modal-p-ep-time','modal-p-ep-peak-time'));
+  const ak = document.getElementById(svgId.replace('modal-p-ep-points','modal-p-ep-avg-points').replace('modal-p-ep-time','modal-p-ep-avg-time'));
+  if(pk) pk.textContent = mm.fmt(peak);
+  if(ak) ak.textContent = mm.fmt(avg);
+  // hover 浮层：每集整列透明命中区，展示成员拆分
+  if(body){
+    const stTip = ensureChartTip(body);
+    eps.forEach((e,i)=>{
+      const x = pad.l + gap + i*(barW+gap);
+      const hit = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      hit.setAttribute('x', x.toFixed(1));
+      hit.setAttribute('y', pad.t.toFixed(1));
+      hit.setAttribute('width', barW.toFixed(1));
+      hit.setAttribute('height', ch.toFixed(1));
+      hit.setAttribute('fill', 'transparent');
+      hit.style.cursor = 'pointer';
+      hit.addEventListener('mouseenter', ()=>{
+        const p = pointInBody(svg, body, x + barW/2, pad.t);
+        const sorted = e.members.slice().sort((a,b)=>b.points-a.points);
+        const rows = sorted.map(m=>{
+          const pct = e.total>0 ? (m.points/e.total*100).toFixed(1) : '0.0';
+          return `<div class="tip-val"><span class="tip-dot" style="background:${m.color}"></span>${escapeHtml(m.name)}：<b>${mm.fmt(m.points)}</b> · 占 ${pct}%</div>`;
+        }).join('');
+        showChartTip(body, stTip,
+          `<div class="tip-date">第 ${e.ep} 集</div>${rows}<div class="tip-val" style="margin-top:3px;padding-top:3px;border-top:1px solid rgba(255,255,255,.2)">合计：<b>${mm.fmt(e.total)}</b> ${mm.unit}</div>`,
+          p.tx, p.ty);
+      });
+      hit.addEventListener('mouseleave', ()=> hideChartTip(stTip));
       svg.appendChild(hit);
     });
   }
